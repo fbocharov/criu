@@ -494,7 +494,7 @@ static int vma_list_add(struct vma_area *vma_area,
 
 		pages = vma_area_len(vma_area) / PAGE_SIZE;
 		vma_area_list->priv_size += pages;
-		vma_area_list->longest = max(vma_area_list->longest, pages);
+		vma_area_list->priv_longest = max(vma_area_list->priv_longest, pages);
 	}
 
 	*prev_vfi = *vfi;
@@ -517,8 +517,9 @@ int parse_smaps(pid_t pid, struct vm_area_list *vma_area_list)
 
 	vma_area_list->nr = 0;
 	vma_area_list->nr_aios = 0;
-	vma_area_list->longest = 0;
+	vma_area_list->priv_longest = 0;
 	vma_area_list->priv_size = 0;
+	vma_area_list->shared_longest = 0;
 	INIT_LIST_HEAD(&vma_area_list->h);
 
 	f.fd = open_proc(pid, "smaps");
