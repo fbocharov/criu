@@ -1153,6 +1153,10 @@ static int pre_dump_one_task(struct pstree_item *item, struct list_head *ctls)
 	if (ret)
 		goto err_cure;
 
+	ret = task_reset_dirty_track(pid);
+	if (ret)
+		goto err_cure;
+
 	if (parasite_cure_remote(parasite_ctl))
 		pr_err("Can't cure (pid: %d) from parasite\n", pid);
 	list_add_tail(&parasite_ctl->pre_list, ctls);
@@ -1368,6 +1372,10 @@ static int dump_one_task(struct pstree_item *item)
 		pr_err("Dump fs (pid: %d) failed with %d\n", pid, ret);
 		goto err;
 	}
+
+	ret = task_reset_dirty_track(pid);
+	if (ret)
+		goto err;
 
 	close_cr_imgset(&cr_imgset);
 	exit_code = 0;
