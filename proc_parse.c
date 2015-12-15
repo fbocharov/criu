@@ -495,6 +495,11 @@ static int vma_list_add(struct vma_area *vma_area,
 		pages = vma_area_len(vma_area) / PAGE_SIZE;
 		vma_area_list->priv_size += pages;
 		vma_area_list->priv_longest = max(vma_area_list->priv_longest, pages);
+	} else if (vma_area_is(vma_area, VMA_ANON_SHARED)) {
+		unsigned long pages;
+
+		pages = vma_area_len(vma_area) / PAGE_SIZE;
+		vma_area_list->shared_longest = max(vma_area_list->shared_longest, pages);
 	}
 
 	*prev_vfi = *vfi;
