@@ -12,6 +12,7 @@
 #include "page-xfer.h"
 #include "rst-malloc.h"
 #include "vma.h"
+#include "mem.h"
 
 #include "protobuf.h"
 #include "protobuf/pagemap.pb-c.h"
@@ -282,12 +283,42 @@ struct shmem_info_dump {
 	unsigned long	start;
 	unsigned long	end;
 	int		pid;
+	unsigned long	*pdirty_map;
 
 	struct shmem_info_dump *next;
 };
 
 #define SHMEM_HASH_SIZE	32
 static struct shmem_info_dump *shmems_hash[SHMEM_HASH_SIZE];
+
+#define BLOCKS_CNT(size, block_size) (((size) + (block_size) - 1) / (block_size))
+
+static int expand_shmem_pdirty_map(struct shmem_info_dump *si, unsigned long mem_size)
+{
+	unsigned long nr_pages, size, new_size;
+
+	nr_pages = BLOCKS_CNT(si->size, PAGE_SIZE);
+	size = BLOCKS_CNT(nr_pages, sizeof(*si->pdirty_map));
+
+	nr_pages = BLOCKS_CNT(mem_size, PAGE_SIZE);
+	new_size = BLOCKS_CNT(nr_pages, sizeof(*si->pdirty_map));
+
+	si->pdirty_map = xrealloc(si->pdirty_map, new_size);
+	if (!si->pdirty_map)
+		return -1;
+	memzero((char *)si->pdirty_map + size, new_size - size);
+
+	return 0;
+}
+
+static void update_shmem_pdirty_map(struct shmem_info_dump *si, u64 *map)
+{
+	unsigned long p, pcount = BLOCKS_CNT(si->size, PAGE_SIZE);
+
+	for (p = 0; p < pcount; ++p)
+		if (map[p] & PME_SOFT_DIRTY)
+			set_bit(p, si->pdirty_map);
+}
 
 static struct shmem_info_dump *shmem_find(struct shmem_info_dump **chain,
 		unsigned long shmid)
@@ -301,7 +332,7 @@ static struct shmem_info_dump *shmem_find(struct shmem_info_dump **chain,
 	return NULL;
 }
 
-int add_shmem_area(pid_t pid, VmaEntry *vma)
+int add_shmem_area(pid_t pid, VmaEntry *vma, u64 *map)
 {
 	struct shmem_info_dump *si, **chain;
 	unsigned long size = vma->pgoff + (vma->end - vma->start);
@@ -309,12 +340,18 @@ int add_shmem_area(pid_t pid, VmaEntry *vma)
 	chain = &shmems_hash[vma->shmid % SHMEM_HASH_SIZE];
 	si = shmem_find(chain, vma->shmid);
 	if (si) {
-		if (si->size < size)
+		if (si->size < size) {
+			if (expand_shmem_pdirty_map(si, size))
+				return -1;
+
 			si->size = size;
+		}
+		update_shmem_pdirty_map(si, map);
+
 		return 0;
 	}
 
-	si = xmalloc(sizeof(*si));
+	si = xzalloc(sizeof(*si));
 	if (!si)
 		return -1;
 
@@ -326,6 +363,10 @@ int add_shmem_area(pid_t pid, VmaEntry *vma)
 	si->start = vma->start;
 	si->end = vma->end;
 	si->shmid = vma->shmid;
+
+	if (expand_shmem_pdirty_map(si, size))
+		return -1;
+	update_shmem_pdirty_map(si, map);
 
 	return 0;
 }
