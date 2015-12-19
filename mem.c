@@ -246,6 +246,7 @@ static int __parasite_dump_pages_seized(struct parasite_ctl *ctl,
 	struct vma_area *vma_area;
 	struct page_xfer xfer = { .parent = NULL };
 	int ret = -1;
+	unsigned long pmc_size;
 
 	pr_info("\n");
 	pr_info("Dumping pages (type: %d pid: %d)\n", CR_FD_PAGES, ctl->pid.real);
@@ -262,8 +263,9 @@ static int __parasite_dump_pages_seized(struct parasite_ctl *ctl,
 	 * Step 0 -- prepare
 	 */
 
+	pmc_size = max(vma_area_list->priv_longest, vma_area_list->shared_longest);
 	if (pmc_init(&pmc, ctl->pid.real, &vma_area_list->h,
-			 vma_area_list->priv_longest * PAGE_SIZE))
+			 pmc_size * PAGE_SIZE))
 		return -1;
 
 	ret = -1;
@@ -293,22 +295,27 @@ static int __parasite_dump_pages_seized(struct parasite_ctl *ctl,
 		u64 off = 0;
 		u64 *map;
 
-		if (!vma_area_is_private(vma_area, kdat.task_size))
+		if (!vma_area_is_private(vma_area, kdat.task_size) &&
+				!vma_area_is(vma_area, VMA_ANON_SHARED))
 			continue;
 
 		map = pmc_get_map(&pmc, vma_area);
 		if (!map)
 			goto out_xfer;
+		if (vma_area_is(vma_area, VMA_ANON_SHARED))
+			ret = add_shmem_area(ctl->pid.real, vma_area->e, map);
+		else {
 again:
-		ret = generate_iovs(vma_area, pp, map, &off, xfer.parent);
-		if (ret == -EAGAIN) {
-			BUG_ON(pp_ret);
+			ret = generate_iovs(vma_area, pp, map, &off, xfer.parent);
+			if (ret == -EAGAIN) {
+				BUG_ON(pp_ret);
 
-			ret = dump_pages(pp, ctl, args, &xfer);
-			if (ret)
-				goto out_xfer;
-			page_pipe_reinit(pp);
-			goto again;
+				ret = dump_pages(pp, ctl, args, &xfer);
+				if (ret)
+					goto out_xfer;
+				page_pipe_reinit(pp);
+				goto again;
+			}
 		}
 		if (ret < 0)
 			goto out_xfer;
