@@ -148,15 +148,13 @@ static int shmem_wait_and_open(int pid, struct shmem_info *si)
 
 static int restore_shmem_content(void *addr, struct shmem_info *si)
 {
-	int ret = 0, fd_pg;
+	int ret = 0;
 	struct page_read pr;
-	unsigned long off_real;
 
 	ret = open_page_read(si->shmid, &pr, PR_SHMEM);
 	if (ret <= 0)
 		return -1;
 
-	fd_pg = img_raw_fd(pr.pi);
 	while (1) {
 		unsigned long vaddr;
 		unsigned nr_pages;
@@ -172,20 +170,9 @@ static int restore_shmem_content(void *addr, struct shmem_info *si)
 		if (vaddr + nr_pages * PAGE_SIZE > si->size)
 			break;
 
-		off_real = lseek(fd_pg, 0, SEEK_CUR);
-
-		ret = read(fd_pg, addr + vaddr, nr_pages * PAGE_SIZE);
-		if (ret != nr_pages * PAGE_SIZE) {
-			ret = -1;
+		ret = pr.read_pages(&pr, vaddr, nr_pages, addr + vaddr);
+		if (ret < 0)
 			break;
-		}
-
-		if (opts.auto_dedup) {
-			ret = punch_hole(&pr, off_real, nr_pages * PAGE_SIZE, false);
-			if (ret == -1) {
-				break;
-			}
-		}
 
 		if (pr.put_pagemap)
 			pr.put_pagemap(&pr);
@@ -413,16 +400,10 @@ static int dump_one_shmem(struct shmem_info_dump *si)
 	struct page_pipe *pp;
 	struct page_xfer xfer;
 	int err, ret = -1, fd;
-	unsigned char *map = NULL;
 	void *addr = NULL;
 	unsigned long pfn, nrpages;
 
 	pr_info("Dumping shared memory %ld\n", si->shmid);
-
-	nrpages = (si->size + PAGE_SIZE - 1) / PAGE_SIZE;
-	map = xmalloc(nrpages * sizeof(*map));
-	if (!map)
-		goto err;
 
 	fd = open_proc(si->pid, "map_files/%lx-%lx", si->start, si->end);
 	if (fd < 0)
@@ -436,17 +417,7 @@ static int dump_one_shmem(struct shmem_info_dump *si)
 		goto err;
 	}
 
-	/*
-	 * We can't use pagemap here, because this vma is
-	 * not mapped to us at all, but mincore reports the
-	 * pagecache status of a file, which is correct in
-	 * this case.
-	 */
-
-	err = mincore(addr, si->size, map);
-	if (err)
-		goto err_unmap;
-
+	nrpages = (si->size + PAGE_SIZE - 1) / PAGE_SIZE;
 	iovs = xmalloc(((nrpages + 1) / 2) * sizeof(struct iovec));
 	if (!iovs)
 		goto err_unmap;
@@ -460,10 +431,17 @@ static int dump_one_shmem(struct shmem_info_dump *si)
 		goto err_pp;
 
 	for (pfn = 0; pfn < nrpages; pfn++) {
-		if (!(map[pfn] & PAGE_RSS))
+		unsigned long dirty;
+
+		if (!test_bit(pfn, si->pused_map))
 			continue;
 again:
-		ret = page_pipe_add_page(pp, (unsigned long)addr + pfn * PAGE_SIZE);
+		dirty = test_bit(pfn, si->pdirty_map);
+		if (xfer.parent && page_in_parent(dirty))
+			ret = page_pipe_add_hole(pp, (unsigned long)addr + pfn * PAGE_SIZE);
+		else
+			ret = page_pipe_add_page(pp, (unsigned long)addr + pfn * PAGE_SIZE);
+
 		if (ret == -EAGAIN) {
 			ret = dump_pages(pp, &xfer, addr);
 			if (ret)
@@ -485,7 +463,6 @@ err_iovs:
 err_unmap:
 	munmap(addr,  si->size);
 err:
-	xfree(map);
 	return ret;
 }
 
