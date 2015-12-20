@@ -304,18 +304,21 @@ static int expand_shmem_pinfo_maps(struct shmem_info_dump *si, unsigned long mem
 	return 0;
 }
 
-static void update_shmem_pinfo_maps(struct shmem_info_dump *si, u64 *map)
+static void update_shmem_pinfo_maps(struct shmem_info_dump *si, u64 *map,
+		unsigned long off)
 {
-	unsigned long p, pcount = BLOCKS_CNT(si->size, PAGE_SIZE);
+	unsigned long p, pcount, poff;
 
+	pcount = BLOCKS_CNT(si->size - off, PAGE_SIZE);
+	poff = BLOCKS_CNT(off, PAGE_SIZE);
 	for (p = 0; p < pcount; ++p) {
 		if (map[p] & PME_SOFT_DIRTY)
-			set_bit(p, si->pdirty_map);
+			set_bit(p + poff, si->pdirty_map);
 		if (map[p] & PME_SWAP)
-			set_bit(p, si->pused_map);
+			set_bit(p + poff, si->pused_map);
 		else if ((map[p] & PME_PRESENT) &&
 				((map[p] & PME_PFRAME_MASK) != kdat.zero_page_pfn))
-			set_bit(p, si->pused_map);
+			set_bit(p + poff, si->pused_map);
 	}
 }
 
@@ -345,7 +348,7 @@ int add_shmem_area(pid_t pid, VmaEntry *vma, u64 *map)
 
 			si->size = size;
 		}
-		update_shmem_pinfo_maps(si, map);
+		update_shmem_pinfo_maps(si, map, vma->pgoff);
 
 		return 0;
 	}
@@ -365,7 +368,7 @@ int add_shmem_area(pid_t pid, VmaEntry *vma, u64 *map)
 
 	if (expand_shmem_pinfo_maps(si, size))
 		return -1;
-	update_shmem_pinfo_maps(si, map);
+	update_shmem_pinfo_maps(si, map, vma->pgoff);
 
 	return 0;
 }
