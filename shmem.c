@@ -34,7 +34,7 @@ struct shmem_info {
 	 * 1. the master opens a descriptor and set lock to 1
 	 * 2. slaves open their descriptors and increment lock
 	 * 3. the master waits all slaves on lock. After that
-	 *    it can close the descriptor.
+	 *	it can close the descriptor.
 	 */
 	futex_t		lock;
 
@@ -117,7 +117,7 @@ int collect_shmem(int pid, VmaEntry *vi)
 	si->shmid = vi->shmid;
 	si->pid	  = pid;
 	si->size  = size;
-	si->fd    = -1;
+	si->fd	= -1;
 	si->count = 1;
 	si->self_count = 1;
 	futex_init(&si->lock);
@@ -140,7 +140,7 @@ static int shmem_wait_and_open(int pid, struct shmem_info *si)
 	pr_info("Opening shmem [%s] \n", path);
 	ret = open_proc_rw(si->pid, "fd/%d", si->fd);
 	if (ret < 0)
-		pr_perror("     %d: Can't stat shmem at %s",
+		pr_perror("	 %d: Can't stat shmem at %s",
 				si->pid, path);
 	futex_inc_and_wake(&si->lock);
 	return ret;
@@ -281,25 +281,30 @@ static struct shmem_info_dump *shmems_hash[SHMEM_HASH_SIZE];
 
 #define BLOCKS_CNT(size, block_size) (((size) + (block_size) - 1) / (block_size))
 
-static int expand_shmem_pinfo_maps(struct shmem_info_dump *si, unsigned long mem_size)
+static int expand_shmem_pinfo_maps(struct shmem_info_dump *si, unsigned long new_mem_size)
 {
-	unsigned long nr_pages, size, new_size;
+	unsigned long nr_pages, nr_map_items, map_size,
+				nr_new_map_items, new_map_size;
 
 	nr_pages = BLOCKS_CNT(si->size, PAGE_SIZE);
-	size = BLOCKS_CNT(nr_pages, sizeof(*si->pdirty_map));
+	nr_map_items = BLOCKS_CNT(nr_pages, sizeof(*si->pdirty_map) * 8);
+	map_size = nr_map_items * sizeof(*si->pdirty_map);
 
-	nr_pages = BLOCKS_CNT(mem_size, PAGE_SIZE);
-	new_size = BLOCKS_CNT(nr_pages, sizeof(*si->pdirty_map));
+	nr_pages = BLOCKS_CNT(new_mem_size, PAGE_SIZE);
+	nr_new_map_items = BLOCKS_CNT(nr_pages, sizeof(*si->pdirty_map) * 8);
+	new_map_size = nr_new_map_items * sizeof(*si->pdirty_map);
 
-	si->pdirty_map = xrealloc(si->pdirty_map, new_size);
+	BUG_ON(new_map_size < map_size);
+
+	si->pdirty_map = xrealloc(si->pdirty_map, new_map_size);
 	if (!si->pdirty_map)
 		return -1;
-	memzero((char *)si->pdirty_map + size, new_size - size);
+	memzero(si->pdirty_map + nr_map_items, new_map_size - map_size);
 
-	si->pused_map = xrealloc(si->pused_map, new_size);
+	si->pused_map = xrealloc(si->pused_map, new_map_size);
 	if (!si->pused_map)
 		return -1;
-	memzero((char *)si->pused_map + size, new_size - size);
+	memzero(si->pused_map + nr_map_items, new_map_size - map_size);
 
 	return 0;
 }
@@ -360,7 +365,7 @@ int add_shmem_area(pid_t pid, VmaEntry *vma, u64 *map)
 	si->next = *chain;
 	*chain = si;
 
-	si->size = size;
+	si->size = 0;
 	si->pid = pid;
 	si->start = vma->start;
 	si->end = vma->end;
@@ -368,6 +373,7 @@ int add_shmem_area(pid_t pid, VmaEntry *vma, u64 *map)
 
 	if (expand_shmem_pinfo_maps(si, size))
 		return -1;
+	si->size = size;
 	update_shmem_pinfo_maps(si, map, vma->pgoff);
 
 	return 0;
@@ -429,6 +435,7 @@ static int dump_one_shmem(struct shmem_info_dump *si)
 
 		if (!test_bit(pfn, si->pused_map))
 			continue;
+
 again:
 		dirty = test_bit(pfn, si->pdirty_map);
 		if (xfer.parent && page_in_parent(dirty))
