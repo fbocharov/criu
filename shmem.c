@@ -284,6 +284,7 @@ struct shmem_info_dump {
 	unsigned long	end;
 	int		pid;
 	unsigned long	*pdirty_map;
+	unsigned long	*pused_map;
 
 	struct shmem_info_dump *next;
 };
@@ -293,7 +294,7 @@ static struct shmem_info_dump *shmems_hash[SHMEM_HASH_SIZE];
 
 #define BLOCKS_CNT(size, block_size) (((size) + (block_size) - 1) / (block_size))
 
-static int expand_shmem_pdirty_map(struct shmem_info_dump *si, unsigned long new_mem_size)
+static int expand_shmem_pinfo_maps(struct shmem_info_dump *si, unsigned long new_mem_size)
 {
 	unsigned long nr_pages, nr_map_items, map_size,
 				nr_new_map_items, new_map_size;
@@ -313,19 +314,30 @@ static int expand_shmem_pdirty_map(struct shmem_info_dump *si, unsigned long new
 		return -1;
 	memzero(si->pdirty_map + nr_map_items, new_map_size - map_size);
 
+	si->pused_map = xrealloc(si->pused_map, new_map_size);
+	if (!si->pused_map)
+		return -1;
+	memzero(si->pused_map + nr_map_items, new_map_size - map_size);
+
 	return 0;
 }
 
-static void update_shmem_pdirty_map(struct shmem_info_dump *si, u64 *map,
+static void update_shmem_pinfo_maps(struct shmem_info_dump *si, u64 *map,
 		unsigned long off)
 {
 	unsigned long p, pcount, poff;
 
 	pcount = BLOCKS_CNT(si->size - off, PAGE_SIZE);
 	poff = BLOCKS_CNT(off, PAGE_SIZE);
-	for (p = 0; p < pcount; ++p)
+	for (p = 0; p < pcount; ++p) {
 		if (map[p] & PME_SOFT_DIRTY)
 			set_bit(p + poff, si->pdirty_map);
+		if (map[p] & PME_SWAP)
+			set_bit(p + poff, si->pused_map);
+		else if ((map[p] & PME_PRESENT) &&
+				((map[p] & PME_PFRAME_MASK) != kdat.zero_page_pfn))
+			set_bit(p + poff, si->pused_map);
+	}
 }
 
 static struct shmem_info_dump *shmem_find(struct shmem_info_dump **chain,
@@ -349,12 +361,12 @@ int add_shmem_area(pid_t pid, VmaEntry *vma, u64 *map)
 	si = shmem_find(chain, vma->shmid);
 	if (si) {
 		if (si->size < size) {
-			if (expand_shmem_pdirty_map(si, size))
+			if (expand_shmem_pinfo_maps(si, size))
 				return -1;
 
 			si->size = size;
 		}
-		update_shmem_pdirty_map(si, map, vma->pgoff);
+		update_shmem_pinfo_maps(si, map, vma->pgoff);
 
 		return 0;
 	}
@@ -372,10 +384,10 @@ int add_shmem_area(pid_t pid, VmaEntry *vma, u64 *map)
 	si->end = vma->end;
 	si->shmid = vma->shmid;
 
-	if (expand_shmem_pdirty_map(si, size))
+	if (expand_shmem_pinfo_maps(si, size))
 		return -1;
 	si->size = size;
-	update_shmem_pdirty_map(si, map, vma->pgoff);
+	update_shmem_pinfo_maps(si, map, vma->pgoff);
 
 	return 0;
 }
