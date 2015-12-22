@@ -294,7 +294,7 @@ static struct shmem_info_dump *shmems_hash[SHMEM_HASH_SIZE];
 
 #define BLOCKS_CNT(size, block_size) (((size) + (block_size) - 1) / (block_size))
 
-static int expand_shmem(struct shmem_info_dump *si, unsigned long new_size)
+static int expand_shmem_pinfo_maps(struct shmem_info_dump *si, unsigned long new_mem_size)
 {
 	unsigned long nr_pages, nr_map_items, map_size,
 				nr_new_map_items, new_map_size;
@@ -303,7 +303,7 @@ static int expand_shmem(struct shmem_info_dump *si, unsigned long new_size)
 	nr_map_items = BLOCKS_CNT(nr_pages, sizeof(*si->pdirty_map) * 8);
 	map_size = nr_map_items * sizeof(*si->pdirty_map);
 
-	nr_pages = BLOCKS_CNT(new_size, PAGE_SIZE);
+	nr_pages = BLOCKS_CNT(new_mem_size, PAGE_SIZE);
 	nr_new_map_items = BLOCKS_CNT(nr_pages, sizeof(*si->pdirty_map) * 8);
 	new_map_size = nr_new_map_items * sizeof(*si->pdirty_map);
 
@@ -319,11 +319,10 @@ static int expand_shmem(struct shmem_info_dump *si, unsigned long new_size)
 		return -1;
 	memzero(si->pused_map + nr_map_items, new_map_size - map_size);
 
-	si->size = new_size;
 	return 0;
 }
 
-static void update_shmem_pmaps(struct shmem_info_dump *si, u64 *map,
+static void update_shmem_pinfo_maps(struct shmem_info_dump *si, u64 *map,
 		unsigned long off)
 {
 	unsigned long p, pcount, poff;
@@ -357,20 +356,27 @@ int add_shmem_area(pid_t pid, VmaEntry *vma, u64 *map)
 {
 	struct shmem_info_dump *si, **chain;
 	unsigned long size = vma->pgoff + (vma->end - vma->start);
+<<<<<<< HEAD
+	(void)map;
+=======
+    (void)map;
+>>>>>>> f20feb6... shmem: implement used and dirty pages tracking
 
 	chain = &shmems_hash[vma->shmid % SHMEM_HASH_SIZE];
 	si = shmem_find(chain, vma->shmid);
 	if (si) {
 		if (si->size < size) {
-			if (expand_shmem(si, size))
+			if (expand_shmem_pinfo_maps(si, size))
 				return -1;
+
+			si->size = size;
 		}
-		update_shmem_pmaps(si, map, vma->pgoff);
+		update_shmem_pinfo_maps(si, map, vma->pgoff);
 
 		return 0;
 	}
 
-	si = xmalloc(sizeof(*si));
+	si = xzalloc(sizeof(*si));
 	if (!si)
 		return -1;
 
@@ -383,9 +389,10 @@ int add_shmem_area(pid_t pid, VmaEntry *vma, u64 *map)
 	si->end = vma->end;
 	si->shmid = vma->shmid;
 
-	if (expand_shmem(si, size))
+	if (expand_shmem_pinfo_maps(si, size))
 		return -1;
-	update_shmem_pmaps(si, map, vma->pgoff);
+	si->size = size;
+	update_shmem_pinfo_maps(si, map, vma->pgoff);
 
 	return 0;
 }
