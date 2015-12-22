@@ -12,6 +12,7 @@
 #include "page-xfer.h"
 #include "rst-malloc.h"
 #include "vma.h"
+#include "mem.h"
 
 #include "protobuf.h"
 #include "protobuf/pagemap.pb-c.h"
@@ -301,10 +302,11 @@ static struct shmem_info_dump *shmem_find(struct shmem_info_dump **chain,
 	return NULL;
 }
 
-int add_shmem_area(pid_t pid, VmaEntry *vma)
+int add_shmem_area(pid_t pid, VmaEntry *vma, u64 *map)
 {
 	struct shmem_info_dump *si, **chain;
 	unsigned long size = vma->pgoff + (vma->end - vma->start);
+	(void)map;
 
 	chain = &shmems_hash[vma->shmid % SHMEM_HASH_SIZE];
 	si = shmem_find(chain, vma->shmid);
